@@ -42,6 +42,13 @@ import { LayerPreview } from "./layer-preview";
 import { SelectionBox } from "./selection-box";
 import { SelectionTools } from "./selection-tools";
 import { CursorsPresence } from "./cursors-presence";
+import { useAuth } from "@clerk/nextjs";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "@/convex/_generated/api";
+import { Id } from "@/convex/_generated/dataModel";
+import { ShieldBan } from "lucide-react";
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
 const MAX_LAYERS = 100;
 
@@ -51,12 +58,15 @@ interface CanvasProps {
 
 export const Canvas = ({ boardId }: CanvasProps) => {
   const layerIds = useStorage((root) => root.layerIds);
+  const userInfo = useAuth();
 
   const pencilDraft = useSelf((me) => me.presence.pencilDraft);
   const [canvasState, setCanvasState] = useState<CanvasState>({
     mode: CanvasMode.None,
   });
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0 });
+  const [userAuth, setUserAuth] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [lastUsedColor, setLastUsedColor] = useState<Color>({
     r: 0,
     g: 0,
@@ -430,62 +440,104 @@ export const Canvas = ({ boardId }: CanvasProps) => {
     };
   }, [deleteLayers, history]);
 
+  useEffect(() => {
+    getUserPermission();
+  }, [userAuth]);
+
+  const getUserPermission = async () => {
+    const bid: Id<"boards"> = boardId as unknown as Id<"boards">;
+    setLoading(true);
+    await convex.query(api.board.get, { id: bid }).then((b) => {
+      if (userInfo.orgId === b?.orgId) {
+        setUserAuth(true);
+      }
+      setLoading(false);
+    });
+  };
+
   return (
-    <main className="h-full w-full relative bg-neutral-100 touch-none">
-      <Info boardId={boardId} />
-      <Participants />
-      <Toolbar
-        canvasState={canvasState}
-        setCanvasState={setCanvasState}
-        canRedo={canRedo}
-        canUndo={canUndo}
-        undo={history.undo}
-        redo={history.redo}
-      />
-      <SelectionTools camera={camera} setLastUsedColor={setLastUsedColor} />
-      <svg
-        className="h-[100vh] w-[100vw]"
-        onWheel={onWheel}
-        onPointerMove={onPointerMove}
-        onPointerLeave={onPointerLeave}
-        onPointerDown={onPointerDown}
-        onPointerUp={onPointerUp}
-      >
-        <g
-          style={{
-            transform: `translate(${camera.x}px, ${camera.y}px)`,
-          }}
-        >
-          {layerIds.map((layerId) => (
-            <LayerPreview
-              key={layerId}
-              id={layerId}
-              onLayerPointerDown={onLayerPointerDown}
-              selectionColor={layerIdsToColorSelection[layerId]}
+    !loading && (
+      <>
+        {userAuth ? (
+          <main className="h-full w-full relative bg-neutral-100 touch-none">
+            <Info boardId={boardId} />
+            <Participants />
+            <Toolbar
+              canvasState={canvasState}
+              setCanvasState={setCanvasState}
+              canRedo={canRedo}
+              canUndo={canUndo}
+              undo={history.undo}
+              redo={history.redo}
             />
-          ))}
-          <SelectionBox onResizeHandlePointerDown={onResizeHandlePointerDown} />
-          {canvasState.mode === CanvasMode.SelectionNet &&
-            canvasState.current != null && (
-              <rect
-                className="fill-blue-500/5 stroke-blue-500 stroke-1"
-                x={Math.min(canvasState.origin.x, canvasState.current.x)}
-                y={Math.min(canvasState.origin.y, canvasState.current.y)}
-                width={Math.abs(canvasState.origin.x - canvasState.current.x)}
-                height={Math.abs(canvasState.origin.y - canvasState.current.y)}
-              />
-            )}
-          <CursorsPresence />
-          {pencilDraft != null && pencilDraft.length > 0 && (
-            <Path
-              points={pencilDraft}
-              fill={colorToCss(lastUsedColor)}
-              x={0}
-              y={0}
+            <SelectionTools
+              camera={camera}
+              setLastUsedColor={setLastUsedColor}
             />
-          )}
-        </g>
-      </svg>
-    </main>
+            <svg
+              className="h-[100vh] w-[100vw]"
+              onWheel={onWheel}
+              onPointerMove={onPointerMove}
+              onPointerLeave={onPointerLeave}
+              onPointerDown={onPointerDown}
+              onPointerUp={onPointerUp}
+            >
+              <g
+                style={{
+                  transform: `translate(${camera.x}px, ${camera.y}px)`,
+                }}
+              >
+                {layerIds.map((layerId) => (
+                  <LayerPreview
+                    key={layerId}
+                    id={layerId}
+                    onLayerPointerDown={onLayerPointerDown}
+                    selectionColor={layerIdsToColorSelection[layerId]}
+                  />
+                ))}
+                <SelectionBox
+                  onResizeHandlePointerDown={onResizeHandlePointerDown}
+                />
+                {canvasState.mode === CanvasMode.SelectionNet &&
+                  canvasState.current != null && (
+                    <rect
+                      className="fill-blue-500/5 stroke-blue-500 stroke-1"
+                      x={Math.min(canvasState.origin.x, canvasState.current.x)}
+                      y={Math.min(canvasState.origin.y, canvasState.current.y)}
+                      width={Math.abs(
+                        canvasState.origin.x - canvasState.current.x
+                      )}
+                      height={Math.abs(
+                        canvasState.origin.y - canvasState.current.y
+                      )}
+                    />
+                  )}
+                <CursorsPresence />
+                {pencilDraft != null && pencilDraft.length > 0 && (
+                  <Path
+                    points={pencilDraft}
+                    fill={colorToCss(lastUsedColor)}
+                    x={0}
+                    y={0}
+                  />
+                )}
+              </g>
+            </svg>
+          </main>
+        ) : (
+          <div className="h-full w-full relative bg-neutral-100 touch-none">
+            <div className="absolute top-1/2 flex justify-between right-1/2 p-5 rounded-md translate-x-1/2 -translate-y-1/2 shadow-2xl ">
+              <ShieldBan className="h-9 w-9 mt-1 mr-5 text-red-500" />
+              <div className="flex flex-col">
+                <p className="text-red-500 font-bold">You are Unauthorized</p>
+                <p className="text-red-500">
+                  Please ask the board owner for access
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    )
   );
 };
